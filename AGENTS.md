@@ -2,39 +2,46 @@
 
 ## Project Structure & Module Organization
 
-This repository is a local Chrome Manifest V3 extension for TradingView Bar Replay session jumps.
+Local Chrome/Opera MV3 extension for TradingView Bar Replay session jumps.
 
-- `manifest.json`: extension metadata, permissions, content script registration, and keyboard commands.
-- `background.js`: service worker that attaches Chrome debugger, dispatches click/type CDP input, and forwards command shortcuts to the active tab.
-- `content.js`: TradingView overlay UI, replay date dialog automation, date math, state persistence, and message calls into the background worker.
-- `README.md`: user install and usage instructions.
-
-There is no build output directory, bundled asset tree, or test directory in the current repo.
+- `manifest.json`: metadata, permissions, content script registration, and keyboard commands.
+- `background.js`: service worker for debugger attachment, CDP input, storage fallback, and command forwarding.
+- `content.js`: TradingView overlay UI, replay date dialog automation, date math, state persistence, and background messages.
+- `README.md`: install and usage instructions.
 
 ## Build, Test, and Development Commands
 
-- `node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"`: validate `manifest.json` syntax before loading the extension.
+- `node --check background.js && node --check content.js`: check JavaScript syntax.
+- `node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"`: check `manifest.json`.
 - `chrome://extensions`: enable Developer mode, click **Load unpacked**, and select this repository folder.
-- Reload the extension from `chrome://extensions` after editing `manifest.json`, `background.js`, or `content.js`.
+- Reload the unpacked extension after editing `manifest.json`, `background.js`, or `content.js`.
 
-Manual smoke test: open `https://www.tradingview.com/`, start Bar Replay, set a `YYYY-MM-DD` date, then test `Alt+Shift+N`, `Alt+Shift+P`, and `Alt+Shift+I`.
+Manual smoke test: open TradingView, start Bar Replay, set a `YYYY-MM-DD` date, then test `Alt+Shift+N`, `Alt+Shift+P`, `Alt+Shift+I`, and `Alt+Shift+H`.
 
 ## Coding Style & Naming Conventions
 
-Use plain JavaScript with two-space indentation and semicolons, matching the existing files. Prefer small functions with explicit names such as `cdpClick`, `runSteps`, `nextBusinessDate`, and `findReplayDateButton`. Keep Chrome message types stable and namespaced with `tvReplay...`.
+Use plain JavaScript with two-space indentation and semicolons. Prefer small functions such as `cdpClick`, `runSteps`, `nextBusinessDate`, and `findReplayDateButton`. Keep Chrome message types stable and namespaced with `tvReplay...`.
 
-Avoid adding dependencies or build tooling unless the extension clearly needs it. Keep user-facing overlay text short because it renders inside TradingView.
+Avoid dependencies or build tooling unless clearly needed. Keep overlay text short because it renders inside TradingView.
+
+## TradingView Automation Notes
+
+Do not assume TradingView's public Charting Library APIs are available on `tradingview.com` Supercharts. `setVisibleRange` changes embedded-widget viewport, not Bar Replay state. Use the replay-dialog path unless live testing proves a stable internal API exists.
+
+The replay date dialog can reset fields to the current date when opened. Automation must set both date and time before submitting. Current flow: open toolbar, click **Select date**, fill date/time through CDP key events, submit, then detach.
+
+Settings stay minimal: target time defaults to `08:00`, and weekend skipping is optional. Do not reintroduce calibration or date-format settings without a verified need.
 
 ## Testing Guidelines
 
-There is no automated test framework yet. For logic-only changes, add small pure functions where practical so they can later be tested without Chrome APIs. For behavior changes, verify in Chrome against TradingView and note the tested browser, target page, and shortcut or button path.
+There is no automated test framework yet. Keep logic pure where practical. For behavior changes, verify in Chrome or Opera against TradingView and note the browser, target page, and shortcut or button path.
 
 ## Commit & Pull Request Guidelines
 
-The current history uses short, lowercase imperative summaries, for example `first commit, extension for tv replay jump`. Keep commits concise and focused.
+History uses short, lowercase imperative summaries, for example `first commit, extension for tv replay jump`. Keep commits focused.
 
-Pull requests should describe the changed replay workflow, list manual Chrome validation steps, and include screenshots or screen recordings for overlay UI changes. Call out any permission changes in `manifest.json`.
+Pull requests should describe replay workflow changes, list manual browser validation, and include screenshots or recordings for overlay UI changes. Call out `manifest.json` permission changes.
 
 ## Security & Configuration Tips
 
-The extension requests `debugger`, `tabs`, `activeTab`, `storage`, and `https://www.tradingview.com/*`. Do not broaden host permissions without a concrete need. The debugger API should attach only for the click/type sequence and detach in `finally`.
+Current permissions are `debugger`, `tabs`, `activeTab`, `storage`, and `https://www.tradingview.com/*`. Do not broaden them without a concrete need. Attach debugger only for click/type sequences and detach in `finally`.
