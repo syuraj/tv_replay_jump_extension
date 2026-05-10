@@ -17,7 +17,7 @@
   ],
   "commands": {
     "tv-replay-next": {
-      "suggested_key": { "default": "Alt+Shift+J" },
+      "suggested_key": { "default": "Alt+Shift+N" },
       "description": "Jump to next replay session"
     },
     "tv-replay-prev": {

@@ -413,12 +413,12 @@
     if (!e.altKey || !e.shiftKey) return;
 
     const key = e.key.toLowerCase();
-    if (!["j", "p", "i", "h"].includes(key)) return;
+    if (!["n", "p", "i", "h"].includes(key)) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    if (key === "j") jump(1).catch(showError);
+    if (key === "n") jump(1).catch(showError);
     if (key === "p") jump(-1).catch(showError);
     if (key === "i") setCurrentDate().catch(showError);
     if (key === "h") togglePanel();

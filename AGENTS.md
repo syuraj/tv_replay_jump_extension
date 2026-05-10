@@ -17,7 +17,7 @@ There is no build output directory, bundled asset tree, or test directory in the
 - `chrome://extensions`: enable Developer mode, click **Load unpacked**, and select this repository folder.
 - Reload the extension from `chrome://extensions` after editing `manifest.json`, `background.js`, or `content.js`.
 
-Manual smoke test: open `https://www.tradingview.com/`, start Bar Replay, set a `YYYY-MM-DD` date, then test `Alt+Shift+J`, `Alt+Shift+P`, and `Alt+Shift+I`.
+Manual smoke test: open `https://www.tradingview.com/`, start Bar Replay, set a `YYYY-MM-DD` date, then test `Alt+Shift+N`, `Alt+Shift+P`, and `Alt+Shift+I`.
 
 ## Coding Style & Naming Conventions
 
