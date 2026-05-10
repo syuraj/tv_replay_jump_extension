@@ -13,16 +13,10 @@ Local Chrome extension helper for jumping TradingView Bar Replay to the next 08:
 ## Use
 
 1. Open TradingView chart in Chrome.
-2. Start Bar Replay and make Replay controls visible.
-3. Click **Calibrate** in the small overlay.
-4. Hover over each requested UI element and press **F8**:
-   - Replay timing/dropdown menu
-   - Select date... menu item
-   - Date input
-   - Time input
-   - OK / Apply / Go button
-5. Click **Set Date** and enter the current replay session date as `YYYY-MM-DD`.
-6. Click **Next 08:00** or press `Alt+Shift+J`.
+2. Start Bar Replay. The extension will open the replay toolbar if it is hidden.
+3. Click **Set Date** and enter the current replay session date as `YYYY-MM-DD`.
+4. Click **Next 08:00** or press `Alt+Shift+J`.
+5. Use **Prev** or press `Alt+Shift+P` to move backward one session.
 
 ## Settings
 
@@ -30,7 +24,9 @@ Local Chrome extension helper for jumping TradingView Bar Replay to the next 08:
 - Default time: `08:00`
 - Weekend skipping: on
 
-Use **Settings** in the overlay to change date format/time.
+Use **Settings** in the overlay to change the target time.
+
+The **Calibrate** button is kept only for old workflows; current TradingView builds use the replay date dialog directly.
 
 ## Notes
 

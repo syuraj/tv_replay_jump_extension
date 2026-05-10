@@ -2,11 +2,18 @@ const CDP_VERSION = "1.3";
 
 function chromeCall(fn) {
   return new Promise((resolve, reject) => {
-    fn((result) => {
-      const err = chrome.runtime.lastError;
-      if (err) reject(new Error(err.message));
-      else resolve(result);
-    });
+    const timer = setTimeout(() => reject(new Error("Chrome debugger command timed out.")), 5000);
+    try {
+      fn((result) => {
+        clearTimeout(timer);
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message));
+        else resolve(result);
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      reject(err);
+    }
   });
 }
 
@@ -22,6 +29,14 @@ function send(tabId, method, params = {}) {
   return chromeCall((cb) => chrome.debugger.sendCommand({ tabId }, method, params, cb));
 }
 
+function storageGet(key) {
+  return chromeCall((cb) => chrome.storage.local.get(key, cb));
+}
+
+function storageSet(obj) {
+  return chromeCall((cb) => chrome.storage.local.set(obj, cb));
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function cdpClick(tabId, x, y) {
@@ -29,13 +44,15 @@ async function cdpClick(tabId, x, y) {
     type: "mouseMoved",
     x,
     y,
-    button: "none"
+    button: "none",
+    buttons: 0
   });
   await send(tabId, "Input.dispatchMouseEvent", {
     type: "mousePressed",
     x,
     y,
     button: "left",
+    buttons: 1,
     clickCount: 1
   });
   await send(tabId, "Input.dispatchMouseEvent", {
@@ -43,47 +60,121 @@ async function cdpClick(tabId, x, y) {
     x,
     y,
     button: "left",
+    buttons: 0,
     clickCount: 1
   });
 }
 
-async function cdpSelectAll(tabId) {
+async function cdpSelectAll(tabId, modifier = "control") {
+  const isMeta = modifier === "meta";
+  const modKey = isMeta ? "Meta" : "Control";
+  const modCode = isMeta ? "MetaLeft" : "ControlLeft";
+  const modVirtualKey = isMeta ? 91 : 17;
+  const modMask = isMeta ? 4 : 2;
+
   await send(tabId, "Input.dispatchKeyEvent", {
     type: "rawKeyDown",
-    key: "Control",
-    code: "ControlLeft",
-    windowsVirtualKeyCode: 17,
-    nativeVirtualKeyCode: 17,
-    modifiers: 2
+    key: modKey,
+    code: modCode,
+    windowsVirtualKeyCode: modVirtualKey,
+    nativeVirtualKeyCode: modVirtualKey,
+    modifiers: modMask,
+    commands: []
   });
   await send(tabId, "Input.dispatchKeyEvent", {
     type: "rawKeyDown",
-    key: "a",
+    key: "A",
     code: "KeyA",
     windowsVirtualKeyCode: 65,
     nativeVirtualKeyCode: 65,
-    modifiers: 2
+    modifiers: modMask,
+    commands: ["selectAll"]
   });
   await send(tabId, "Input.dispatchKeyEvent", {
     type: "keyUp",
-    key: "a",
+    key: "A",
     code: "KeyA",
     windowsVirtualKeyCode: 65,
     nativeVirtualKeyCode: 65,
-    modifiers: 2
+    modifiers: modMask
   });
   await send(tabId, "Input.dispatchKeyEvent", {
     type: "keyUp",
-    key: "Control",
-    code: "ControlLeft",
-    windowsVirtualKeyCode: 17,
-    nativeVirtualKeyCode: 17,
+    key: modKey,
+    code: modCode,
+    windowsVirtualKeyCode: modVirtualKey,
+    nativeVirtualKeyCode: modVirtualKey,
     modifiers: 0
   });
 }
 
-async function cdpInsertText(tabId, text) {
-  await send(tabId, "Input.insertText", { text });
+function keyParams(ch) {
+  if (/^\d$/.test(ch)) {
+    return {
+      key: ch,
+      code: `Digit${ch}`,
+      windowsVirtualKeyCode: ch.charCodeAt(0),
+      nativeVirtualKeyCode: ch.charCodeAt(0),
+      text: ch,
+      unmodifiedText: ch
+    };
+  }
+
+  if (ch === "-") {
+    return {
+      key: "-",
+      code: "Minus",
+      windowsVirtualKeyCode: 189,
+      nativeVirtualKeyCode: 189,
+      text: "-",
+      unmodifiedText: "-"
+    };
+  }
+
+  if (ch === ":") {
+    return {
+      key: ":",
+      code: "Semicolon",
+      windowsVirtualKeyCode: 186,
+      nativeVirtualKeyCode: 186,
+      text: ":",
+      unmodifiedText: ":"
+    };
+  }
+
+  const upper = ch.toUpperCase();
+  return {
+    key: upper,
+    code: `Key${upper}`,
+    windowsVirtualKeyCode: upper.charCodeAt(0),
+    nativeVirtualKeyCode: upper.charCodeAt(0),
+    text: ch,
+    unmodifiedText: ch
+  };
+}
+
+async function cdpTypeText(tabId, text) {
+  for (const ch of String(text ?? "")) {
+    const params = {
+      ...keyParams(ch),
+      type: "keyDown",
+      modifiers: 0,
+      commands: [],
+      autoRepeat: false,
+      location: 0,
+      isKeypad: false
+    };
+    await send(tabId, "Input.dispatchKeyEvent", params);
+    await send(tabId, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: params.key,
+      code: params.code,
+      windowsVirtualKeyCode: params.windowsVirtualKeyCode,
+      nativeVirtualKeyCode: params.nativeVirtualKeyCode,
+      modifiers: 0,
+      location: 0
+    });
+  }
 }
 
 async function runSteps(tabId, steps) {
@@ -95,9 +186,9 @@ async function runSteps(tabId, steps) {
       } else if (step.kind === "sleep") {
         await sleep(step.ms ?? 250);
       } else if (step.kind === "selectAll") {
-        await cdpSelectAll(tabId);
+        await cdpSelectAll(tabId, step.modifier);
       } else if (step.kind === "type") {
-        await cdpInsertText(tabId, String(step.text ?? ""));
+        await cdpTypeText(tabId, step.text);
       } else {
         throw new Error(`Unknown step kind: ${step.kind}`);
       }
@@ -109,6 +200,15 @@ async function runSteps(tabId, steps) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+    if (msg?.type === "tvReplayStorageGet") {
+      return await storageGet(msg.key);
+    }
+
+    if (msg?.type === "tvReplayStorageSet") {
+      await storageSet(msg.value ?? {});
+      return { ok: true };
+    }
+
     if (msg?.type === "tvReplayRunSteps") {
       const tabId = sender?.tab?.id ?? msg.tabId;
       if (!tabId) throw new Error("No active TradingView tab id found.");

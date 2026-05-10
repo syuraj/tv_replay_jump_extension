@@ -1,5 +1,6 @@
 (() => {
   const STORE_KEY = "tvReplayJumpState";
+  const POINT_KEYS = ["selectDateButton", "dateField", "timeField", "okButton"];
   const DEFAULT_STATE = {
     points: {},
     currentDate: null,
@@ -28,13 +29,25 @@
   }
 
   async function loadState() {
-    const obj = await chrome.storage.local.get(STORE_KEY);
+    const obj = await storageGet(STORE_KEY);
     state = mergeState(DEFAULT_STATE, obj[STORE_KEY] ?? {});
   }
 
   async function saveState() {
-    await chrome.storage.local.set({ [STORE_KEY]: state });
+    await storageSet({ [STORE_KEY]: state });
     updatePanel();
+  }
+
+  async function storageGet(key) {
+    if (chrome.storage?.local) return await chrome.storage.local.get(key);
+    return await chrome.runtime.sendMessage({ type: "tvReplayStorageGet", key });
+  }
+
+  async function storageSet(value) {
+    if (chrome.storage?.local) return await chrome.storage.local.set(value);
+    const response = await chrome.runtime.sendMessage({ type: "tvReplayStorageSet", value });
+    if (!response?.ok) throw new Error(response?.error || "Storage save failed");
+    return response;
   }
 
   function mergeState(base, incoming) {
@@ -118,11 +131,11 @@
     document.documentElement.appendChild(panel);
 
     statusEl = document.getElementById("tv-rj-status");
-    document.getElementById("tv-rj-next").addEventListener("click", () => jump(1));
-    document.getElementById("tv-rj-prev").addEventListener("click", () => jump(-1));
-    document.getElementById("tv-rj-set").addEventListener("click", setCurrentDate);
-    document.getElementById("tv-rj-cal").addEventListener("click", calibrate);
-    document.getElementById("tv-rj-settings").addEventListener("click", editSettings);
+    document.getElementById("tv-rj-next").addEventListener("click", () => runSafely(() => jump(1)));
+    document.getElementById("tv-rj-prev").addEventListener("click", () => runSafely(() => jump(-1)));
+    document.getElementById("tv-rj-set").addEventListener("click", () => runSafely(setCurrentDate));
+    document.getElementById("tv-rj-cal").addEventListener("click", () => runSafely(calibrate));
+    document.getElementById("tv-rj-settings").addEventListener("click", () => runSafely(editSettings));
     document.getElementById("tv-rj-hide").addEventListener("click", () => panel.style.display = "none");
   }
 
@@ -130,10 +143,7 @@
     const stateLine = document.getElementById("tv-rj-state");
     if (!stateLine) return;
 
-    const pts = ["replayMenu", "selectDate", "dateField", "timeField", "okButton"]
-      .filter((k) => state.points[k]).length;
-
-    stateLine.textContent = `Date: ${state.currentDate ?? "not set"}\nTime: ${state.settings.timeText} | Points: ${pts}/5`;
+    stateLine.textContent = `Date: ${state.currentDate ?? "not set"}\nTime: ${state.settings.timeText} | Mode: auto`;
   }
 
   function setStatus(text) {
@@ -142,34 +152,9 @@
   }
 
   async function calibrate() {
-    await loadState();
     panel.style.display = "block";
-    setStatus("Calibration started. Keep Bar Replay controls visible.");
-
-    alert("Calibration: hover over each requested TradingView UI item and press F8.\n\nStart with the Replay timing/dropdown menu button on the Bar Replay panel.");
-
-    state.points.replayMenu = await capturePoint("1/5: Hover over Replay timing/dropdown menu button, then press F8.");
-    await saveState();
-
-    await runSteps([
-      clickStep(state.points.replayMenu),
-      sleepStep(400)
-    ]);
-
-    state.points.selectDate = await capturePoint("2/5: Hover over 'Select date...' menu item, then press F8.");
-    await saveState();
-
-    await runSteps([
-      clickStep(state.points.selectDate),
-      sleepStep(700)
-    ]);
-
-    state.points.dateField = await capturePoint("3/5: Hover over DATE input field, then press F8.");
-    state.points.timeField = await capturePoint("4/5: Hover over TIME input field, then press F8.");
-    state.points.okButton = await capturePoint("5/5: Hover over OK / Apply / Go button, then press F8.");
-
-    await saveState();
-    setStatus("Calibration saved. Set current date, then use Next 08:00.");
+    setStatus("No calibration needed. The extension now uses TradingView's replay date dialog.");
+    alert("Calibration is no longer needed.\n\nUse Set Date to sync the extension date, then use Next 08:00 or Prev.");
   }
 
   function capturePoint(promptText) {
@@ -236,11 +221,6 @@
   async function jump(step) {
     await loadState();
 
-    if (!allPointsReady()) {
-      alert("Calibrate first. Need Replay menu, Select date, Date field, Time field, and OK button points.");
-      return;
-    }
-
     if (!isValidYMD(state.currentDate)) {
       await setCurrentDate();
       await loadState();
@@ -248,41 +228,172 @@
     }
 
     const target = nextBusinessDate(state.currentDate, step, state.settings.skipWeekends);
-    const dateText = formatDateForTV(target, state.settings.dateFormat);
     const timeText = state.settings.timeText;
 
     setStatus(`Jumping to ${target} ${timeText}...`);
 
-    await runSteps([
-      clickStep(state.points.replayMenu),
-      sleepStep(350),
-      clickStep(state.points.selectDate),
-      sleepStep(750),
-      clickStep(state.points.dateField),
-      sleepStep(100),
-      { kind: "selectAll" },
-      { kind: "type", text: dateText },
-      sleepStep(150),
-      clickStep(state.points.timeField),
-      sleepStep(100),
-      { kind: "selectAll" },
-      { kind: "type", text: timeText },
-      sleepStep(150),
-      clickStep(state.points.okButton)
-    ]);
+    await jumpWithReplayDialog(target, timeText);
 
     state.currentDate = target;
     await saveState();
     setStatus(`Done: ${target} ${timeText}`);
   }
 
+  async function jumpWithReplayDialog(target, timeText) {
+    await ensureReplayToolbar();
+    await openReplayDateDialog();
+    await fillReplayDateDialog(target, timeText);
+  }
+
+  async function ensureReplayToolbar() {
+    if (findReplayDateButton() || findReplayDateDialog()) return;
+
+    const replayButton = findVisibleElement("button[aria-label='Bar replay']", (el) => {
+      return el.getAttribute("aria-pressed") !== "true";
+    });
+    if (!replayButton) throw new Error("Bar Replay button not found.");
+
+    await clickElement(replayButton);
+    await waitFor(() => findReplayDateButton() || findReplayDateDialog(), 5000, "Bar Replay toolbar did not appear.");
+  }
+
+  async function openReplayDateDialog() {
+    if (findReplayDateDialog()) return;
+
+    const selectDateButton = findReplayDateButton();
+    if (!selectDateButton) throw new Error("Replay Select date button not found.");
+
+    await clickElement(selectDateButton);
+    await waitFor(() => findReplayDateDialog(), 5000, "Replay date dialog did not open.");
+  }
+
+  async function fillReplayDateDialog(target, timeText) {
+    const dialog = findReplayDateDialog();
+    if (!dialog) throw new Error("Replay date dialog not found.");
+
+    const inputs = Array.from(dialog.querySelectorAll("input")).filter(isVisibleElement);
+    if (inputs.length < 2) throw new Error("Replay date/time inputs not found.");
+
+    const submitButton = findVisibleElement("[data-name='submit-button']", undefined, dialog);
+    if (!submitButton) throw new Error("Replay Select button not found.");
+
+    const selectAllModifier = getSelectAllModifier();
+
+    await runSteps([
+      clickStep(centerPoint(inputs[0])),
+      sleepStep(100),
+      { kind: "selectAll", modifier: selectAllModifier },
+      { kind: "type", text: target },
+      sleepStep(100),
+      clickStep(centerPoint(inputs[1])),
+      sleepStep(100),
+      { kind: "selectAll", modifier: selectAllModifier },
+      { kind: "type", text: normalizeTimeText(timeText) },
+      sleepStep(150),
+      clickStep(centerPoint(submitButton))
+    ]);
+
+    await waitFor(() => !findReplayDateDialog(), 7000, "TradingView did not accept the replay date.");
+  }
+
   function allPointsReady() {
-    return ["replayMenu", "selectDate", "dateField", "timeField", "okButton"]
-      .every((k) => state.points[k] && Number.isFinite(state.points[k].x) && Number.isFinite(state.points[k].y));
+    return POINT_KEYS.every((k) => {
+      const point = getPoint(k);
+      return point && Number.isFinite(point.x) && Number.isFinite(point.y);
+    });
+  }
+
+  function getPoint(key) {
+    if (key === "selectDateButton") return state.points.selectDateButton ?? state.points.replayMenu;
+    return state.points[key];
   }
 
   function clickStep(point) {
     return { kind: "click", x: point.x, y: point.y };
+  }
+
+  function centerPoint(el) {
+    const rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2)
+    };
+  }
+
+  async function clickElement(el) {
+    await runSteps([clickStep(centerPoint(el))]);
+  }
+
+  function findReplayDateDialog() {
+    return findVisibleElement("[data-name='select-date-dialog']");
+  }
+
+  function findReplayDateButton() {
+    const toolbar = findVisibleElement("[data-name='replay-bottom-toolbar']");
+    if (!toolbar) return null;
+
+    const candidates = Array.from(toolbar.querySelectorAll("button, div, span"))
+      .filter(isVisibleElement)
+      .filter((el) => getText(el) === "Select date")
+      .map((el) => {
+        let candidate = el;
+        let parent = el.parentElement;
+        while (parent && toolbar.contains(parent) && getText(parent) === "Select date") {
+          candidate = parent;
+          parent = parent.parentElement;
+        }
+        return candidate;
+      });
+
+    return candidates.sort((a, b) => visibleArea(b) - visibleArea(a))[0] ?? null;
+  }
+
+  function findVisibleElement(selector, predicate, root = document) {
+    return Array.from(root.querySelectorAll(selector)).find((el) => {
+      return isVisibleElement(el) && (!predicate || predicate(el));
+    }) ?? null;
+  }
+
+  function isVisibleElement(el) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+  }
+
+  function visibleArea(el) {
+    const rect = el.getBoundingClientRect();
+    return rect.width * rect.height;
+  }
+
+  function getText(el) {
+    return (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  function waitFor(fn, timeoutMs, errorMessage) {
+    const started = Date.now();
+    return new Promise((resolve, reject) => {
+      const tick = () => {
+        if (fn()) {
+          resolve();
+          return;
+        }
+        if (Date.now() - started >= timeoutMs) {
+          reject(new Error(errorMessage));
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
+  }
+
+  function normalizeTimeText(timeText) {
+    const match = String(timeText ?? "").trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return "08:00";
+    const hh = String(Math.min(23, Number(match[1]))).padStart(2, "0");
+    return `${hh}:${match[2]}`;
   }
 
   function sleepStep(ms) {
@@ -293,6 +404,10 @@
     const response = await chrome.runtime.sendMessage({ type: "tvReplayRunSteps", steps });
     if (!response?.ok) throw new Error(response?.error || "Replay jump failed");
     return response;
+  }
+
+  function getSelectAllModifier() {
+    return navigator.platform.toLowerCase().includes("mac") ? "meta" : "control";
   }
 
   function isValidYMD(s) {
@@ -355,5 +470,9 @@
     console.error("TV Replay Jump error:", err);
     setStatus(`Error: ${err.message || err}`);
     alert(`TV Replay Jump error:\n${err.message || err}`);
+  }
+
+  function runSafely(fn) {
+    Promise.resolve().then(fn).catch(showError);
   }
 })();
