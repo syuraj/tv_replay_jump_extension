@@ -27,6 +27,10 @@
     "tv-replay-init": {
       "suggested_key": { "default": "Alt+Shift+I" },
       "description": "Set current replay session date"
+    },
+    "tv-replay-toggle": {
+      "suggested_key": { "default": "Alt+Shift+H" },
+      "description": "Show or hide replay jump overlay"
     }
   }
 }
