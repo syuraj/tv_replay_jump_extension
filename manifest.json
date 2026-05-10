@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "TradingView Replay Session Jumper",
+  "description": "Local helper to jump TradingView Bar Replay to the next 08:00 session using calibrated UI points.",
+  "version": "0.1.0",
+  "permissions": ["storage", "activeTab", "debugger", "tabs"],
+  "host_permissions": ["https://www.tradingview.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.tradingview.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "tv-replay-next": {
+      "suggested_key": { "default": "Alt+Shift+J" },
+      "description": "Jump to next replay session"
+    },
+    "tv-replay-prev": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Jump to previous replay session"
+    },
+    "tv-replay-init": {
+      "suggested_key": { "default": "Alt+Shift+I" },
+      "description": "Set current replay session date"
+    },
+    "tv-replay-calibrate": {
+      "suggested_key": { "default": "Alt+Shift+C" },
+      "description": "Calibrate TradingView Replay UI points"
+    }
+  }
+}
