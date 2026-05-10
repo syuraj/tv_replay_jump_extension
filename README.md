@@ -1,6 +1,6 @@
 # TradingView Replay Session Jumper
 
-Local Chrome extension helper for jumping TradingView Bar Replay to the next 08:00 session.
+Local Chrome extension helper for jumping TradingView Bar Replay to the next configured session time.
 
 ## Install
 
@@ -20,13 +20,10 @@ Local Chrome extension helper for jumping TradingView Bar Replay to the next 08:
 
 ## Settings
 
-- Default date format: `MM/dd/yyyy`
 - Default time: `08:00`
 - Weekend skipping: on
 
 Use **Settings** in the overlay to change the target time.
-
-The **Calibrate** button is kept only for old workflows; current TradingView builds use the replay date dialog directly.
 
 ## Notes
 

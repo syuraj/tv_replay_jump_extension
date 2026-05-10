@@ -1,24 +1,16 @@
 (() => {
   const STORE_KEY = "tvReplayJumpState";
-  const POINT_KEYS = ["selectDateButton", "dateField", "timeField", "okButton"];
   const DEFAULT_STATE = {
-    points: {},
     currentDate: null,
     settings: {
-      dateFormat: "MM/dd/yyyy",
       timeText: "08:00",
       skipWeekends: true
     }
   };
 
   let state = structuredClone(DEFAULT_STATE);
-  let lastMouse = { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) };
   let panel;
   let statusEl;
-
-  window.addEventListener("mousemove", (e) => {
-    lastMouse = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
-  }, true);
 
   init();
 
@@ -52,10 +44,11 @@
 
   function mergeState(base, incoming) {
     return {
-      ...structuredClone(base),
-      ...incoming,
-      points: { ...base.points, ...(incoming.points ?? {}) },
-      settings: { ...base.settings, ...(incoming.settings ?? {}) }
+      currentDate: incoming.currentDate ?? base.currentDate,
+      settings: {
+        timeText: incoming.settings?.timeText ?? base.settings.timeText,
+        skipWeekends: incoming.settings?.skipWeekends ?? base.settings.skipWeekends
+      }
     };
   }
 
@@ -71,7 +64,6 @@
         <button id="tv-rj-next">Next 08:00</button>
         <button id="tv-rj-prev">Prev</button>
         <button id="tv-rj-set">Set Date</button>
-        <button id="tv-rj-cal">Calibrate</button>
         <button id="tv-rj-settings">Settings</button>
         <button id="tv-rj-hide">Hide</button>
       </div>
@@ -134,9 +126,8 @@
     document.getElementById("tv-rj-next").addEventListener("click", () => runSafely(() => jump(1)));
     document.getElementById("tv-rj-prev").addEventListener("click", () => runSafely(() => jump(-1)));
     document.getElementById("tv-rj-set").addEventListener("click", () => runSafely(setCurrentDate));
-    document.getElementById("tv-rj-cal").addEventListener("click", () => runSafely(calibrate));
     document.getElementById("tv-rj-settings").addEventListener("click", () => runSafely(editSettings));
-    document.getElementById("tv-rj-hide").addEventListener("click", () => panel.style.display = "none");
+    document.getElementById("tv-rj-hide").addEventListener("click", hidePanel);
   }
 
   function updatePanel() {
@@ -144,6 +135,9 @@
     if (!stateLine) return;
 
     stateLine.textContent = `Date: ${state.currentDate ?? "not set"}\nTime: ${state.settings.timeText} | Mode: auto`;
+
+    const nextButton = document.getElementById("tv-rj-next");
+    if (nextButton) nextButton.textContent = `Next ${state.settings.timeText}`;
   }
 
   function setStatus(text) {
@@ -151,27 +145,21 @@
     if (statusEl) statusEl.textContent = text;
   }
 
-  async function calibrate() {
-    panel.style.display = "block";
-    setStatus("No calibration needed. The extension now uses TradingView's replay date dialog.");
-    alert("Calibration is no longer needed.\n\nUse Set Date to sync the extension date, then use Next 08:00 or Prev.");
+  function hidePanel() {
+    if (!panel) panel = document.getElementById("tv-replay-jumper-panel");
+    if (panel) panel.style.display = "none";
   }
 
-  function capturePoint(promptText) {
-    setStatus(promptText);
+  function showPanel() {
+    if (!panel) panel = document.getElementById("tv-replay-jumper-panel");
+    if (panel) panel.style.display = "block";
+  }
 
-    return new Promise((resolve) => {
-      const handler = (e) => {
-        if (e.key !== "F8") return;
-        e.preventDefault();
-        e.stopPropagation();
-        window.removeEventListener("keydown", handler, true);
-        const point = { x: lastMouse.x, y: lastMouse.y };
-        setStatus(`Captured ${point.x}, ${point.y}`);
-        resolve(point);
-      };
-      window.addEventListener("keydown", handler, true);
-    });
+  function togglePanel() {
+    if (!panel) panel = document.getElementById("tv-replay-jumper-panel");
+    if (!panel) return;
+    if (panel.style.display === "none") showPanel();
+    else hidePanel();
   }
 
   async function setCurrentDate() {
@@ -194,25 +182,18 @@
   async function editSettings() {
     await loadState();
 
-    const dateFormat = prompt(
-      "Date format to paste into TradingView:\nMM/dd/yyyy, yyyy-MM-dd, or dd/MM/yyyy",
-      state.settings.dateFormat
-    );
-    if (dateFormat === null) return;
+    const timeText = prompt("Target replay time as HH:MM, 24-hour format:", state.settings.timeText);
+    if (timeText === null) return;
 
-    const fmt = dateFormat.trim();
-    if (!["MM/dd/yyyy", "yyyy-MM-dd", "dd/MM/yyyy"].includes(fmt)) {
-      alert("Unsupported format. Use MM/dd/yyyy, yyyy-MM-dd, or dd/MM/yyyy.");
+    const cleanTime = normalizeTimeText(timeText);
+    if (!isValidTimeText(cleanTime)) {
+      alert("Bad time. Use HH:MM, example: 08:00");
       return;
     }
 
-    const timeText = prompt("Time text to paste into TradingView:", state.settings.timeText);
-    if (timeText === null) return;
-
     const skip = confirm("Skip weekends? OK=yes, Cancel=no");
 
-    state.settings.dateFormat = fmt;
-    state.settings.timeText = timeText.trim() || "08:00";
+    state.settings.timeText = cleanTime;
     state.settings.skipWeekends = skip;
     await saveState();
     setStatus("Settings saved.");
@@ -294,18 +275,6 @@
     ]);
 
     await waitFor(() => !findReplayDateDialog(), 7000, "TradingView did not accept the replay date.");
-  }
-
-  function allPointsReady() {
-    return POINT_KEYS.every((k) => {
-      const point = getPoint(k);
-      return point && Number.isFinite(point.x) && Number.isFinite(point.y);
-    });
-  }
-
-  function getPoint(key) {
-    if (key === "selectDateButton") return state.points.selectDateButton ?? state.points.replayMenu;
-    return state.points[key];
   }
 
   function clickStep(point) {
@@ -392,8 +361,14 @@
   function normalizeTimeText(timeText) {
     const match = String(timeText ?? "").trim().match(/^(\d{1,2}):(\d{2})$/);
     if (!match) return "08:00";
-    const hh = String(Math.min(23, Number(match[1]))).padStart(2, "0");
+    const hh = String(Number(match[1])).padStart(2, "0");
     return `${hh}:${match[2]}`;
+  }
+
+  function isValidTimeText(timeText) {
+    const match = String(timeText ?? "").trim().match(/^(\d{2}):(\d{2})$/);
+    if (!match) return false;
+    return Number(match[1]) <= 23 && Number(match[2]) <= 59;
   }
 
   function sleepStep(ms) {
@@ -434,18 +409,11 @@
     return toYMD(d);
   }
 
-  function formatDateForTV(ymd, fmt) {
-    const [yyyy, mm, dd] = ymd.split("-");
-    if (fmt === "yyyy-MM-dd") return `${yyyy}-${mm}-${dd}`;
-    if (fmt === "dd/MM/yyyy") return `${dd}/${mm}/${yyyy}`;
-    return `${mm}/${dd}/${yyyy}`;
-  }
-
   window.addEventListener("keydown", (e) => {
     if (!e.altKey || !e.shiftKey) return;
 
     const key = e.key.toLowerCase();
-    if (!["j", "p", "i", "c"].includes(key)) return;
+    if (!["j", "p", "i", "h"].includes(key)) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -453,7 +421,7 @@
     if (key === "j") jump(1).catch(showError);
     if (key === "p") jump(-1).catch(showError);
     if (key === "i") setCurrentDate().catch(showError);
-    if (key === "c") calibrate().catch(showError);
+    if (key === "h") togglePanel();
   }, true);
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -463,7 +431,7 @@
     if (command === "tv-replay-next") jump(1).catch(showError);
     if (command === "tv-replay-prev") jump(-1).catch(showError);
     if (command === "tv-replay-init") setCurrentDate().catch(showError);
-    if (command === "tv-replay-calibrate") calibrate().catch(showError);
+    if (command === "tv-replay-toggle") togglePanel();
   });
 
   function showError(err) {
