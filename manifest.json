@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TradingView Replay Session Jumper",
   "description": "Local helper to jump TradingView Bar Replay to the next configured session time.",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "permissions": ["storage", "activeTab", "debugger", "tabs"],
   "host_permissions": ["https://www.tradingview.com/*"],
   "background": {
@@ -26,7 +26,7 @@
     },
     "tv-replay-init": {
       "suggested_key": { "default": "Alt+Shift+I" },
-      "description": "Set current replay session date"
+      "description": "Refresh current replay session date"
     },
     "tv-replay-toggle": {
       "suggested_key": { "default": "Alt+Shift+H" },

@@ -4,44 +4,49 @@
 
 Local Chrome/Opera MV3 extension for TradingView Bar Replay session jumps.
 
-- `manifest.json`: metadata, permissions, content script registration, and keyboard commands.
-- `background.js`: service worker for debugger attachment, CDP input, storage fallback, and command forwarding.
-- `content.js`: TradingView overlay UI, replay date dialog automation, date math, state persistence, and background messages.
+- `manifest.json`: metadata, permissions, content scripts, and keyboard commands.
+- `background.js`: service worker for debugger attachment, CDP input, storage fallback, replay API calls, and command forwarding.
+- `content.js`: overlay UI, replay automation, date math, state persistence, and background messages.
 - `README.md`: install and usage instructions.
 
 ## Build, Test, and Development Commands
 
 - `node --check background.js && node --check content.js`: check JavaScript syntax.
 - `node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"`: check `manifest.json`.
-- `chrome://extensions`: enable Developer mode, click **Load unpacked**, and select this repository folder.
-- Reload the unpacked extension after editing `manifest.json`, `background.js`, or `content.js`.
+- `chrome://extensions`: enable Developer mode, load this folder, and reload after extension edits.
 
-Manual smoke test: open TradingView, start Bar Replay, set a `YYYY-MM-DD` date, then test `Alt+Shift+N`, `Alt+Shift+P`, `Alt+Shift+I`, and `Alt+Shift+H`.
+Manual smoke test: open TradingView, start Bar Replay, choose an initial point, then test `Alt+Shift+N`, `Alt+Shift+P`, and `Alt+Shift+H`. `Alt+Shift+I` is a hidden refresh shortcut.
 
 ## Coding Style & Naming Conventions
 
-Use plain JavaScript with two-space indentation and semicolons. Prefer small functions such as `cdpClick`, `runSteps`, `nextBusinessDate`, and `findReplayDateButton`. Keep Chrome message types stable and namespaced with `tvReplay...`.
+Use plain JavaScript with two-space indentation and semicolons. Prefer small functions such as `cdpClick`, `runSteps`, and `nextBusinessDate`. Keep message types stable and namespaced with `tvReplay...`.
 
-Avoid dependencies or build tooling unless clearly needed. Keep overlay text short because it renders inside TradingView.
+Avoid dependencies or build tooling unless clearly needed. Keep overlay text short.
 
 ## TradingView Automation Notes
 
-Do not assume TradingView's public Charting Library APIs are available on `tradingview.com` Supercharts. `setVisibleRange` changes embedded-widget viewport, not Bar Replay state. Use the replay-dialog path unless live testing proves a stable internal API exists.
+Do not assume TradingView's public Charting Library APIs are available on `tradingview.com` Supercharts. `setVisibleRange` changes viewport, not Bar Replay state. The verified internal path is `TradingViewApi._replayApi` through debugger `Runtime.evaluate`; keep dialog automation as fallback.
 
-The replay date dialog can reset fields to the current date when opened. Automation must set both date and time before submitting. Current flow: open toolbar, click **Select date**, fill date/time through CDP key events, submit, then detach.
+The replay date dialog can reset fields to the current date when opened. If fallback automation is used, set both date and time before submitting.
 
-Settings stay minimal: target time defaults to `08:00`, and weekend skipping is optional. Do not reintroduce calibration or date-format settings without a verified need.
+Settings stay minimal: target time defaults to `08:00`, and weekend skipping is optional.
+
+## Opera Debugging Notes
+
+Quit Opera before launching with CDP; `open -na` may reuse the existing process and ignore debug flags. Use:
+
+`"/Applications/Opera Air.app/Contents/MacOS/Opera" --user-data-dir="$HOME/Library/Application Support/com.operasoftware.OperaAir" --remote-debugging-port=9333 --remote-allow-origins=* --disable-extensions-except="$PWD" --load-extension="$PWD" "https://www.tradingview.com/chart/L9dtCzNV/"`
+
+Check `http://127.0.0.1:9333/json/list` for TradingView targets. If content changes appear but background messages fail, reload the unpacked extension from `chrome://extensions`; MV3 workers can stay stale. External CDP probes can conflict with extension debugger attachment, so reconnect after extension actions.
 
 ## Testing Guidelines
 
-There is no automated test framework yet. Keep logic pure where practical. For behavior changes, verify in Chrome or Opera against TradingView and note the browser, target page, and shortcut or button path.
+No automated test framework exists. Keep logic pure where practical. For behavior changes, verify in Chrome or Opera and note browser, page, and shortcut/button path.
 
 ## Commit & Pull Request Guidelines
 
-History uses short, lowercase imperative summaries, for example `first commit, extension for tv replay jump`. Keep commits focused.
-
-Pull requests should describe replay workflow changes, list manual browser validation, and include screenshots or recordings for overlay UI changes. Call out `manifest.json` permission changes.
+History uses short, lowercase imperative summaries, for example `first commit, extension for tv replay jump`. PRs should describe replay workflow changes, manual validation, UI evidence, and permission changes.
 
 ## Security & Configuration Tips
 
-Current permissions are `debugger`, `tabs`, `activeTab`, `storage`, and `https://www.tradingview.com/*`. Do not broaden them without a concrete need. Attach debugger only for click/type sequences and detach in `finally`.
+Current permissions are `debugger`, `tabs`, `activeTab`, `storage`, and `https://www.tradingview.com/*`. Do not broaden them without a concrete need. Detach debugger in `finally`.

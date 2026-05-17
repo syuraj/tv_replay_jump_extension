@@ -11,6 +11,7 @@
   let state = structuredClone(DEFAULT_STATE);
   let panel;
   let statusEl;
+  let lastReplayInfo = null;
 
   init();
 
@@ -63,7 +64,6 @@
       <div class="tv-rj-buttons">
         <button id="tv-rj-next">Next 08:00</button>
         <button id="tv-rj-prev">Prev</button>
-        <button id="tv-rj-set">Set Date</button>
         <button id="tv-rj-settings">Settings</button>
         <button id="tv-rj-hide">Hide</button>
       </div>
@@ -116,7 +116,6 @@
       #tv-replay-jumper-panel button:hover {
         background: #3a404a;
       }
-      #tv-rj-hide { grid-column: span 2; }
     `;
 
     document.documentElement.appendChild(style);
@@ -125,7 +124,6 @@
     statusEl = document.getElementById("tv-rj-status");
     document.getElementById("tv-rj-next").addEventListener("click", () => runSafely(() => jump(1)));
     document.getElementById("tv-rj-prev").addEventListener("click", () => runSafely(() => jump(-1)));
-    document.getElementById("tv-rj-set").addEventListener("click", () => runSafely(setCurrentDate));
     document.getElementById("tv-rj-settings").addEventListener("click", () => runSafely(editSettings));
     document.getElementById("tv-rj-hide").addEventListener("click", hidePanel);
   }
@@ -134,7 +132,8 @@
     const stateLine = document.getElementById("tv-rj-state");
     if (!stateLine) return;
 
-    stateLine.textContent = `Date: ${state.currentDate ?? "not set"}\nTime: ${state.settings.timeText} | Mode: auto`;
+    const details = lastReplayInfo?.resolution ? ` | TF: ${formatResolution(lastReplayInfo.resolution)}` : "";
+    stateLine.textContent = `Date: ${state.currentDate ?? "not synced"}\nTime: ${state.settings.timeText}${details}`;
 
     const nextButton = document.getElementById("tv-rj-next");
     if (nextButton) nextButton.textContent = `Next ${state.settings.timeText}`;
@@ -162,21 +161,25 @@
     else hidePanel();
   }
 
-  async function setCurrentDate() {
+  async function syncCurrentDate(options = {}) {
+    const quiet = options.quiet ?? false;
     await loadState();
-    const current = prompt(
-      "Enter CURRENT replay session date as YYYY-MM-DD\nExample: 2024-05-13",
-      state.currentDate ?? ""
-    );
-    if (current === null) return;
-    const clean = current.trim();
-    if (!isValidYMD(clean)) {
-      alert("Bad date. Use YYYY-MM-DD, example: 2024-05-13");
-      return;
+    if (!quiet) setStatus("Reading TradingView replay date...");
+
+    const info = await getReplayInfo();
+    lastReplayInfo = info;
+    if (!info.available) throw new Error("Bar Replay is not available for this chart.");
+    if (!info.started || !isValidYMD(info.currentDate)) {
+      updatePanel();
+      const message = "Start Bar Replay and choose a date first.";
+      if (!quiet) setStatus(message);
+      return false;
     }
-    state.currentDate = clean;
+
+    state.currentDate = info.currentDate;
     await saveState();
-    setStatus(`Current session date set to ${clean}.`);
+    if (!quiet) setStatus(`Synced: ${info.currentDate} ${formatResolution(info.resolution)}`);
+    return true;
   }
 
   async function editSettings() {
@@ -202,10 +205,11 @@
   async function jump(step) {
     await loadState();
 
-    if (!isValidYMD(state.currentDate)) {
-      await setCurrentDate();
-      await loadState();
-      if (!isValidYMD(state.currentDate)) return;
+    const synced = await syncCurrentDate({ quiet: true });
+    await loadState();
+    if (!synced && !isValidYMD(state.currentDate)) {
+      setStatus("Start Bar Replay and choose a date first.");
+      return;
     }
 
     const target = nextBusinessDate(state.currentDate, step, state.settings.skipWeekends);
@@ -213,11 +217,25 @@
 
     setStatus(`Jumping to ${target} ${timeText}...`);
 
-    await jumpWithReplayDialog(target, timeText);
+    const info = await jumpWithInternalApi(target, timeText).catch(async (err) => {
+      console.warn("TV Replay Jump internal API failed, falling back to dialog:", err);
+      await jumpWithReplayDialog(target, timeText);
+      const fallbackInfo = await getReplayInfo();
+      if (!isReplayAtTarget(fallbackInfo, target, timeText)) {
+        const current = fallbackInfo.currentDateTime || fallbackInfo.currentDate || "unknown";
+        throw new Error(`TradingView did not move to ${target} ${timeText}. Current replay point: ${current}.`);
+      }
+      return fallbackInfo;
+    });
 
+    lastReplayInfo = info;
     state.currentDate = target;
     await saveState();
     setStatus(`Done: ${target} ${timeText}`);
+  }
+
+  async function jumpWithInternalApi(target, timeText) {
+    return await runReplayApi("selectDate", { ymd: target, timeText: normalizeTimeText(timeText) });
   }
 
   async function jumpWithReplayDialog(target, timeText) {
@@ -381,12 +399,74 @@
     return response;
   }
 
+  async function runReplayApi(action, payload = {}) {
+    const response = await chrome.runtime.sendMessage({ type: "tvReplayInternalApi", action, payload });
+    if (!response?.ok) throw new Error(response?.error || "TradingView replay API failed");
+    return response;
+  }
+
+  async function getReplayInfo() {
+    return await runReplayApi("status");
+  }
+
   function getSelectAllModifier() {
     return navigator.platform.toLowerCase().includes("mac") ? "meta" : "control";
   }
 
   function isValidYMD(s) {
     return /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ""));
+  }
+
+  function isReplayAtTarget(info, target, timeText) {
+    const targetSeconds = Math.floor(zonedTimeToEpochMs(target, normalizeTimeText(timeText), info?.timeZone) / 1000);
+    return isTargetEpoch(info?.currentEpoch, targetSeconds) || isTargetEpoch(info?.selectedEpoch, targetSeconds);
+  }
+
+  function isTargetEpoch(seconds, targetSeconds) {
+    return Number.isFinite(seconds) && Math.abs(seconds - targetSeconds) < 60;
+  }
+
+  function zonedTimeToEpochMs(ymd, timeText, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone) {
+    const dateMatch = String(ymd ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const timeMatch = String(timeText ?? "08:00").match(/^(\d{2}):(\d{2})$/);
+    if (!dateMatch || !timeMatch) return NaN;
+
+    const targetYear = Number(dateMatch[1]);
+    const targetMonth = Number(dateMatch[2]);
+    const targetDay = Number(dateMatch[3]);
+    const targetHour = Number(timeMatch[1]);
+    const targetMinute = Number(timeMatch[2]);
+    let epoch = Date.UTC(targetYear, targetMonth - 1, targetDay, targetHour, targetMinute, 0);
+
+    for (let i = 0; i < 3; i++) {
+      const parts = datePartsInZone(new Date(epoch), timeZone);
+      const seen = Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day),
+        Number(parts.hour),
+        Number(parts.minute),
+        Number(parts.second)
+      );
+      const wanted = Date.UTC(targetYear, targetMonth - 1, targetDay, targetHour, targetMinute, 0);
+      epoch -= seen - wanted;
+    }
+
+    return epoch;
+  }
+
+  function datePartsInZone(date, timeZone) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(date);
+    return Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
   }
 
   function parseYMD(ymd) {
@@ -409,6 +489,17 @@
     return toYMD(d);
   }
 
+  function formatResolution(resolution) {
+    if (resolution === null || resolution === undefined || resolution === "") return "?";
+    const text = String(resolution);
+    if (/^\d+$/.test(text)) {
+      const minutes = Number(text);
+      if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60}h`;
+      return `${minutes}m`;
+    }
+    return text;
+  }
+
   window.addEventListener("keydown", (e) => {
     if (!e.altKey || !e.shiftKey) return;
 
@@ -420,7 +511,7 @@
 
     if (key === "n") jump(1).catch(showError);
     if (key === "p") jump(-1).catch(showError);
-    if (key === "i") setCurrentDate().catch(showError);
+    if (key === "i") syncCurrentDate().catch(showError);
     if (key === "h") togglePanel();
   }, true);
 
@@ -430,7 +521,7 @@
     const command = msg.command;
     if (command === "tv-replay-next") jump(1).catch(showError);
     if (command === "tv-replay-prev") jump(-1).catch(showError);
-    if (command === "tv-replay-init") setCurrentDate().catch(showError);
+    if (command === "tv-replay-init") syncCurrentDate().catch(showError);
     if (command === "tv-replay-toggle") togglePanel();
   });
 

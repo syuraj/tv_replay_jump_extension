@@ -12,12 +12,11 @@ Local Chrome extension helper for jumping TradingView Bar Replay to the next con
 
 ## Use
 
-1. Open TradingView chart in Chrome.
-2. Start Bar Replay. The extension will open the replay toolbar if it is hidden.
-3. Click **Set Date** and enter the current replay session date as `YYYY-MM-DD`.
-4. Click **Next 08:00** or press `Alt+Shift+N`.
-5. Use **Prev** or press `Alt+Shift+P` to move backward one session.
-6. Press `Alt+Shift+H` to show or hide the overlay.
+1. Open TradingView chart in Chrome or Opera.
+2. Start Bar Replay and choose the initial replay point in TradingView.
+3. Click **Next 08:00** or press `Alt+Shift+N`; the extension reads the current replay date automatically.
+4. Use **Prev** or press `Alt+Shift+P` to move backward one session.
+5. Press `Alt+Shift+H` to show or hide the overlay.
 
 ## Settings
 
@@ -28,4 +27,4 @@ Use **Settings** in the overlay to change the target time.
 
 ## Notes
 
-This extension uses the Chrome debugger API only while executing the click/type sequence, then detaches. Chrome may show a temporary warning that the extension is debugging the browser.
+The extension first uses TradingView's internal replay API through Chrome debugger `Runtime.evaluate`. If that fails, it falls back to the replay date dialog click/type sequence, then detaches the debugger.
