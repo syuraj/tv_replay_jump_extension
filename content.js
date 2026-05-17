@@ -11,7 +11,6 @@
   let state = structuredClone(DEFAULT_STATE);
   let panel;
   let statusEl;
-  let lastReplayInfo = null;
 
   init();
 
@@ -60,7 +59,6 @@
     panel.id = "tv-replay-jumper-panel";
     panel.innerHTML = `
       <div class="tv-rj-title">TV Replay Jump</div>
-      <div class="tv-rj-line" id="tv-rj-state"></div>
       <div class="tv-rj-buttons">
         <button id="tv-rj-next">Next 08:00</button>
         <button id="tv-rj-prev">Prev</button>
@@ -91,12 +89,14 @@
         font-weight: 700;
         margin-bottom: 6px;
       }
-      #tv-replay-jumper-panel .tv-rj-line,
       #tv-replay-jumper-panel .tv-rj-status {
         opacity: 0.92;
         line-height: 1.35;
         margin-bottom: 7px;
         white-space: pre-line;
+      }
+      #tv-replay-jumper-panel .tv-rj-status:empty {
+        display: none;
       }
       #tv-replay-jumper-panel .tv-rj-buttons {
         display: grid;
@@ -129,19 +129,15 @@
   }
 
   function updatePanel() {
-    const stateLine = document.getElementById("tv-rj-state");
-    if (!stateLine) return;
-
-    const details = lastReplayInfo?.resolution ? ` | TF: ${formatResolution(lastReplayInfo.resolution)}` : "";
-    stateLine.textContent = `Date: ${state.currentDate ?? "not synced"}\nTime: ${state.settings.timeText}${details}`;
-
     const nextButton = document.getElementById("tv-rj-next");
     if (nextButton) nextButton.textContent = `Next ${state.settings.timeText}`;
   }
 
   function setStatus(text) {
     if (!statusEl) statusEl = document.getElementById("tv-rj-status");
-    if (statusEl) statusEl.textContent = text;
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.style.display = text ? "block" : "none";
   }
 
   function hidePanel() {
@@ -167,7 +163,6 @@
     if (!quiet) setStatus("Reading TradingView replay date...");
 
     const info = await getReplayInfo();
-    lastReplayInfo = info;
     if (!info.available) throw new Error("Bar Replay is not available for this chart.");
     if (!info.started || !isValidYMD(info.currentDate)) {
       updatePanel();
@@ -178,7 +173,7 @@
 
     state.currentDate = info.currentDate;
     await saveState();
-    if (!quiet) setStatus(`Synced: ${info.currentDate} ${formatResolution(info.resolution)}`);
+    if (!quiet) setStatus("Synced.");
     return true;
   }
 
@@ -205,14 +200,14 @@
   async function jump(step) {
     await loadState();
 
-    const synced = await syncCurrentDate({ quiet: true });
-    await loadState();
-    if (!synced && !isValidYMD(state.currentDate)) {
+    const currentInfo = await getReplayInfo();
+    if (!currentInfo.available) throw new Error("Bar Replay is not available for this chart.");
+    if (!currentInfo.started || !isValidYMD(currentInfo.currentDate)) {
       setStatus("Start Bar Replay and choose a date first.");
       return;
     }
 
-    const target = nextBusinessDate(state.currentDate, step, state.settings.skipWeekends);
+    const target = nextBusinessDate(currentInfo.currentDate, step, state.settings.skipWeekends);
     const timeText = state.settings.timeText;
 
     setStatus(`Jumping to ${target} ${timeText}...`);
@@ -228,10 +223,9 @@
       return fallbackInfo;
     });
 
-    lastReplayInfo = info;
     state.currentDate = target;
     await saveState();
-    setStatus(`Done: ${target} ${timeText}`);
+    setStatus("");
   }
 
   async function jumpWithInternalApi(target, timeText) {
@@ -487,17 +481,6 @@
       d.setUTCDate(d.getUTCDate() + step);
     } while (skipWeekends && (d.getUTCDay() === 0 || d.getUTCDay() === 6));
     return toYMD(d);
-  }
-
-  function formatResolution(resolution) {
-    if (resolution === null || resolution === undefined || resolution === "") return "?";
-    const text = String(resolution);
-    if (/^\d+$/.test(text)) {
-      const minutes = Number(text);
-      if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60}h`;
-      return `${minutes}m`;
-    }
-    return text;
   }
 
   window.addEventListener("keydown", (e) => {
